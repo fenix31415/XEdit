@@ -4,9 +4,8 @@
   Hotkey: Ctrl+F7
 }
 unit UserScript;
-uses mteFunctions;
+uses mteFunctions, uselessCore;
 var
-  patchFile: IInterface;
   files: TStringList;
 
 function fileByFormid(id: string): string;
@@ -19,15 +18,6 @@ begin
     curFile := FileByIndex(i);
     if copy(name(curFile),2,2) = n then begin result := basename(curFile); exit; end;
   end; result := '';
-end;
-
-procedure handleMasters(curFile: IInterface);
-var i:integer;
-begin
-  AddMasterIfMissing(patchFile, GetFileName(curFile));
-  for i := 0 to MasterCount(curFile) - 1 do begin
-    AddMasterIfMissing(patchFile, GetFileName(MasterByIndex(curFile, i)));
-  end;
 end;
 
 function getFullFormId(shortId, filename: string):IInterface;
@@ -143,46 +133,6 @@ begin
   changeItAll(fromRecord, toShortName, prefix, toFilename, group);
 end;
 
-function copyWithMasters(e: IInterface): IInterface;
-var i: integer;
-  mstr, curFile: IInterface;
-  mstrs:TStringList;
-begin
-  //handleMasters(GetFile(e));
-  mstrs := TStringList.Create;
-  mstrs.Duplicates := dupIgnore;
-  mstrs.Sorted := True;
-  
-  AddMasterIfMissing(patchFile, getfilename(GetFile(MasterOrSelf(e))));
-  ReportRequiredMasters(e, mstrs, true, true);
-  for i:=0 to mstrs.Count-1 do begin
-    AddMasterIfMissing(patchFile, mstrs[i]);
-  end;
-  result := wbCopyElementToFile(e, patchFile, false, true);
-end;
-
-/// r already winning
-function normCopy(r:IInterface): IInterface;  // (no)
-var parent, grandParent: IInterface;
-  tmp2, tmp1:cardinal;
-    contName:string;
-    ttmp:integer;
-begin
-  parent := ChildrenOf(GetContainer(r));
-  //addmessage('me:'+fullpath(r));
-  
-  contName := name(GetContainer(parent));
-  if ContainsText(contName,'GRUP World Children of ') or ContainsText(contName,'GRUP Exterior Cell Sub-Block ') then begin
-    grandParent := ChildrenOf(GetContainer(parent));
-    //addmessage('grandParent:'+fullpath(grandParent));
-    copyWithMasters(WinningOverride(grandParent));
-  end;
-  //addmessage('parent:'+fullpath(parent));
-  copyWithMasters(WinningOverride(parent));
-  
-  result := copyWithMasters(r);
-end;
-
 function isRecordFrom(rec: IInterface; from: string): boolean;
 begin
   result := ContainsText(fullpath(rec), 'GRUP Top "' + from + '"');
@@ -204,9 +154,15 @@ function isPresentInFile(f, e:IInterface):boolean;
 var r:IInterface;
 begin
   if SameText(getfilename(getfile(e)), getfilename(f)) or HasMaster(f, getfilename(getfile(e))) then begin
-    r:=RecordByFormID(f, LoadOrderFormIDtoFileFormID(f, GetLoadOrderFormID(e)), False);
+    addmessage('isPresentInFile:'+name(e));
+    r := RecordByFormID(f, LoadOrderFormIDtoFileFormID(f, GetLoadOrderFormID(e)), False);
     if assigned(r) then result := SameText(getfilename(getfile(r)), getfilename(f)) else result := false;
   end else result:=false;
+end;
+
+function isPresentIn(e:IInterface):boolean;
+begin
+  result := isPresentInFile(patchFile, e);
 end;
 
 function isRandom(toNameShort:string):boolean;
@@ -238,6 +194,7 @@ procedure normChange(fromRecord, win:IInterface; toName:string); // (no) but bet
 var r:IInterface;
     id:integer;
 begin
+  //if isPresentIn(win) then addmessage('here'+name(win));
   if isInGroup(win, 'CELL,WRLD') then begin
     if not SameText(GetEditValue(ElementBySignature(win, 'NAME')), toName) then begin  
       r := normCopy(win);
@@ -247,7 +204,12 @@ begin
     r := normCopy(win);
     /// false seems ref removed
     if not CompareExchangeFormID(r, GetLoadOrderFormID(fromRecord), strtoint('$'+toName)) then /// toName='01CCA101'
+    begin
+      //addmessage('removing(no):'+name(r));
+      //addmessage('because '+inttohex(GetLoadOrderFormID(fromRecord),8)+'________'+toName);
       remove(r);
+      
+    end;
   end;
 end;
 
