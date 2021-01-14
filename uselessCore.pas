@@ -9,7 +9,18 @@ interface
 
 var
   patchFile: IInterface;
-  
+  files:TStringList;
+
+
+/// return true if name is in the files
+function shouldI(name: string):boolean;
+
+/// checks if rec in one of the group(s)
+function isInGroup(rec:IInterface; group:string):boolean;
+
+/// returns file prefix bi it's name
+function getPrefixByFileName(name:string):string;
+
 /// copy e with parent, grandparent and their masters
 function normCopy(r:IInterface): IInterface;  // (no)
 
@@ -19,6 +30,38 @@ function normCopyWithPrefix(r:IInterface; aPrefixRemove, aPrefix, aSuffix: strin
 implementation
 
 uses mteFunctions;
+
+function shouldI(name: string):boolean;
+var i: integer;
+begin
+  result := files.Find(name, i);
+end;
+
+function isInGroup(rec:IInterface; group:string):boolean;
+var groups: TStringList;
+    i:integer;
+begin
+  groups:= TStringList.create;
+  groups.Delimiter := ',';
+  groups.DelimitedText:=group;
+  result := false;
+  for i:=0 to groups.Count-1 do
+    result := result or isRecordFrom(rec, groups[i]);
+end;
+
+function isRecordFrom(rec: IInterface; from: string): boolean;
+begin
+  result := ContainsText(fullpath(rec), 'GRUP Top "' + from + '"');
+end;
+
+function getPrefixByFileName(filename:string):string;
+var f:IInterface;
+begin
+  f := filebyname(filename);
+  result:=copy(name(f),2,2);
+  if SameText(result, 'FE') then
+    result := result + copy(name(f),5,3);
+end;
 
 procedure handleMasters(e:IInterface);
 var i: integer;

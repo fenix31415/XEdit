@@ -3,28 +3,69 @@
   -----
   Hotkey: Ctrl+F9
 }
-unit TestUserScript;
+unit DoubleIT;
 uses mteFunctions, uselessCore;
 
+const SOURCE_FILE_NAME = 'CBOS.esp';
+
 var
-  bow: IInterface;
+  sourcePrefix:string;
 
 function Initialize: integer;
 begin
-  //bow := RecordByFormID(filebyname('ccbgssse025-advdsgs.esm'), strtoint('$06000802'), true);
-  
-  //doubleIt(bow);
+  ScriptProcessElements := [etFile];
+  files := TStringList.Create;
+  sourcePrefix := getPrefixByFileName(SOURCE_FILE_NAME);
 end;
 
-procedure doToKWD(e:IInterface, kwd:string);
-var i:integer;
-    kwda, cur:IInterface;
+function process(e:IInterface):integer;
 begin
-  kwda := ElementBySignature(e, kwd);
-  addmessage(inttostr(ElementCount(kwda)));
-  for i:=0 to ElementCount(kwda)-1 do begin
-    cur:=ElementByIndex(kwda, i);
-    addmessage(GetEditValue(cur));
+  files.AddObject(GetFileName(e), TObject(e));
+end;
+
+function Finalize: Integer;
+begin
+  files.Sort;
+  patchFile := FileSelect('Select a file for bow-doubling:');
+  if not assigned(patchFile) then begin
+    addmessage('no file selected, exiting..');
+    result := 1;
+    exit;
+  end;
+  
+  AddMasterIfMissing(patchFile, 'Skyrim.esm');
+  AddMasterIfMissing(patchFile, 'Update.esm');
+  AddMasterIfMissing(patchFile, 'Dawnguard.esm');
+  AddMasterIfMissing(patchFile, 'HearthFires.esm');
+  AddMasterIfMissing(patchFile, 'Dragonborn.esm');
+  
+  main();
+  
+  CleanMasters(patchFile);
+  files.Free;
+end;
+
+procedure main();
+var fromRecord, cur, win: IInterface;
+    i:integer;
+begin
+  fromRecord := RecordByHexFormID('0001E715');
+  for i := ReferencedByCount(fromRecord)-1 downto 0 do begin
+    cur := ReferencedByIndex(fromRecord, i);
+    if not isInGroup(cur, 'WEAP') then continue; // if record is not WEAP
+    
+    if not shouldI(GetFileName(getfile(cur))) then continue;  // if record is not in dedicated file
+    
+    win := WinningOverride(cur);
+    if checkETIM(win) then continue; // has enchants
+    
+    // is already modified
+    if StrEndsWith(GetEditValue(ElementBySignature(win, 'FULL')), 'Лёгкий)') then continue;
+    if StrEndsWith(GetEditValue(ElementBySignature(win, 'FULL')), 'Легкий)') then continue;
+    if StrEndsWith(GetEditValue(ElementBySignature(win, 'FULL')), 'Тяжелый)') then continue;
+    if StrEndsWith(GetEditValue(ElementBySignature(win, 'FULL')), 'Тяжёлый)') then continue;
+    
+    dodoubleIt(win);
   end;
 end;
 
@@ -33,92 +74,156 @@ begin
   result:=assigned(ElementBySignature(e, 'EITM'));
 end;
 
-procedure changeName(el:IInterface; suff:string);
+procedure addSuffixToName(el:IInterface; suff:string);
 var toStr:string;
 begin
   toStr:=GetEditValue(el) + suff;
   SetEditValue(el, toStr);
 end;
 
-procedure changeDamage(el:IInterface; delta: integer);
+procedure changeIntValueBy(el:IInterface; delta:integer);
 var val:integer;
 begin
   val:=strtoint(GetEditValue(el)) + delta;
   SetEditValue(el, inttostr(val));
 end;
 
-procedure changeSpeed(el:IInterface);
-var val, x:float;
+procedure changeFloatValueBy(el:IInterface; delta:float);
+var val:float;
 begin
-  val:=strtofloat(GetEditValue(el));
-  x:=RandomRange(0, 100 + 1) / 1000;
+  val:=strtofloat(GetEditValue(el)) + delta;
+  SetEditValue(el, floattostr(val));
+end;
+
+function decreaseAndNormalize(val, x:float):float;
+begin
   val := val - x * val;
   val := roundto(val, -3);
   val := val * 100;
   val := floor(val);
   val := val / 100;
-  SetEditValue(el, floattostr(val));
+  result := val;
 end;
 
-procedure changeStagger(el:IInterface);
-var val:integer;
+procedure changeScaled(el:IInterface; x:float);
+var val:float;
 begin
-  SetEditValue(el, floattostr(0.1));
+  val := strtofloat(GetEditValue(el));
+  val := decreaseAndNormalize(val, x);
+  SetEditValue(el, floattostr(val));
 end;
 
 procedure changeData(e:IInterface);
 begin
-  changeName(ElementBySignature(e, 'FULL'), ' (Лёгкий)');
-  changeDamage(ElementByIndex(ElementBySignature(e, 'DATA'), 2), -2);
-  changeSpeed(ElementByIndex(ElementBySignature(e, 'DNAM'), 2));
-  changeStagger(ElementByIndex(ElementBySignature(e, 'DNAM'), 26));
+  addSuffixToName(ElementBySignature(e, 'FULL'), ' (Лёгкий)');
+  changeIntValueBy(ElementByIndex(ElementBySignature(e, 'DATA'), 2), -2);
+  changeScaled(ElementByIndex(ElementBySignature(e, 'DNAM'), 2), RandomRange(0, 100 + 1) / 1000); // speed
+  SetEditValue(ElementByIndex(ElementBySignature(e, 'DNAM'), 26), floattostr(0.1)); // stagger
 end;
 
-function copyRec(e:IInterface):IInterface;
+procedure addEnchant(e:IInterface);
+var element, enchs:IInterface;
+    enchId:string;
+begin
+  if not assigned(ElementBySignature(e, 'EITM')) then
+    enchs := Add(e, 'EITM', true) // we know that it always adds but why not
+  else enchs := ElementByPath(e, 'EITM');
+  enchId := sourcePrefix + inttohex(RandomRange($DAAA50,$DAAA56+1),6);
+  SetEditValue(enchs, name(RecordByHexFormID(enchId)));
+end;
+
+procedure changeData_heavy(e:IInterface);
+var newKywd:IInterface;
+begin
+  addSuffixToName(ElementBySignature(e, 'FULL'), ' (Тяжёлый)');
+  addEnchant(e);
+  newKywd := ElementAssign(ElementByPath(e, 'KWDA'), HighInteger, Nil, false);
+  SetEditValue(newKywd, 'MagicDisallowEnchanting [KYWD:000C27BD]'); // without check
+  changeIntValueBy(ElementByIndex(ElementBySignature(e, 'DATA'), 0), 10);
+  changeFloatValueBy(ElementByIndex(ElementBySignature(e, 'DATA'), 1), 1);  // weight
+  changeScaled(ElementByIndex(ElementBySignature(e, 'DNAM'), 2), RandomRange(400, 600 + 1) / 1000); // speed
+end;
+
+function findCraft(e:IInterface):IInterface;
 var i:integer;
-    cur, rec:IInterface;
+    cur, craft:IInterface;
 begin
   for i := ReferencedByCount(e)-1 downto 0 do begin
     cur := ReferencedByIndex(e, i);
     if not SameText(signature(cur), 'COBJ') then continue;
     cur := winningoverride(cur);
-    rec := ElementBySignature(cur, 'CNAM');
-    if GetNativeValue(rec) <> FormID(e) then continue;
+    craft := ElementBySignature(cur, 'CNAM');
+    if GetNativeValue(craft) <> FormID(e) then continue;
     // now seems we found it
-    result:=normCopy(cur);
-    break; // assume theres only 1 rec satisfying
+    result:=cur;
+    break; // assume theres only 1 craft satisfying
   end;
 end;
 
-/// stolen from greatscript
-function recordByShortId(shortId, filename: string):IInterface;
-var fileRecord: IInterface;
-  tmp: string;
+function addItemToCraft(craftItems: IInterface; whatToAddId: string; amount: integer): IInterface;
+var newItem:IInterface;
 begin
-  fileRecord := FileByName(fileName);
-  tmp := '$' + copy(name(fileRecord),2,2) + shortId;
-  result := RecordByFormID(fileRecord, StrToInt(tmp), true);
+  newItem := ElementAssign(craftItems, HighInteger, nil, false);
+  result:=addItemToCraft_(craftItems, newItem, whatToAddId, amount);
+end;
+
+function addItemToCraft_(craftItems, newItem: IInterface; whatToAddId: string; amount: integer): IInterface;
+begin
+  SetElementEditValues(newItem, 'CNTO - Item\Item', whatToAddId);
+  SetElementEditValues(newItem, 'CNTO - Item\Count', amount);
+  Result := newItem;
 end;
 
 procedure changeCraft(craft:IInterface);
-const STRANGE_NUMBERR = $02000000; // dont ask how
-var recCont,cur,item, stringer:IInterface;
+var craftItems,item,f:IInterface;
+    i:integer;
+    s,id:string;
+begin
+  craftItems := ElementByPath(craft, 'Items');
+  addItemToCraft(craftItems, sourcePrefix + 'DA072E', 1);
+  addItemToCraft(craftItems, sourcePrefix + 'DA0731', 2);
+  
+  id := sourcePrefix+'002327';
+  
+  f := FileByLoadOrder(StrToInt('$' + Copy(id, 1, 2)));
+  addmessage('f='+name(f));
+  s := name(RecordByFormID(f, StrToInt('$' + id), true));
+  addmessage('s=' + s);
+  
+  //s:=name(RecordByHexFormID(id));
+  addmessage('hej:' + sourcePrefix+'002327');
+  seev(craft, 'BNAM', s);
+end;
+
+procedure changeCraft_heavy(craft, bow, bow_heavy:IInterface);
+var craftItems,item, conditions, element:IInterface;
     i:integer;
 begin
-  recCont := ElementByPath(craft, 'Items');
-  item := ElementAssign(recCont, HighInteger, nil, False);
-  stringer := recordByShortId('DA072E', 'CBOS.esp');
-  senv(item, 'CNTO\Item', $DA072E + STRANGE_NUMBERR); // dont ask me why
-  seev(item, 'CNTO\Count', 1);
-  item := ElementAssign(recCont, HighInteger, nil, False);
-  senv(item, 'CNTO\Item', $DA0731 + STRANGE_NUMBERR); // dont ask me why
-  seev(item, 'CNTO\Count', 2);
-  seev(craft, 'BNAM', 'WIFletching [KYWD:'+copy(name(filebyname('CBOS.esp')),2,2)+'002327]');
-  {recCont := ElementBySignature(craft, 'BNAM');
-  for i:=0 to ElementCount(recCont)-1 do begin
-    item := LinksTo(ElementByPath(ElementByIndex(recCont, i), 'CNTO - Item\Item'));
-    addmessage(name(item));
-  end;}
+  Remove(ElementByPath(craft, 'Items'));
+  craftItems := Add(craft, 'Items', true);
+  addItemToCraft_(craftItems, ElementByIndex(craftItems, 0), '0000000F', randomrange(500,2500+1));
+  addItemToCraft(craftItems, inttohex(GetLoadOrderFormID(bow),8), 1);
+  addItemToCraft(craftItems, sourcePrefix + 'DA072E', 1);
+  
+  conditions := ElementByPath(craft, 'Conditions');
+  if not assigned(conditions) then begin
+    conditions := Add(craft, 'Conditions', True);
+    element := ElementByIndex(conditions, 0);
+  end else begin
+    element := ElementAssign(conditions, HighInteger, nil, False);
+  end;
+  seev(element, 'CTDA - CTDA\Type', '10000000'); // ==
+  seev(element, 'CTDA - CTDA\Comparison Value - Float', floattostr(1));
+  seev(element, 'CTDA - CTDA\Function', 'HasPerk');
+  seev(element, 'CTDA - CTDA\Perk', name(RecordByHexFormID(sourcePrefix+'DAFBC1')));
+  
+  element := ElementAssign(conditions, HighInteger, nil, False);
+  seev(element, 'CTDA - CTDA\Type', '11000000'); // >=
+  seev(element, 'CTDA - CTDA\Comparison Value - Float', floattostr(1));
+  seev(element, 'CTDA - CTDA\Function', 'GetItemCount');
+  seev(element, 'CTDA - CTDA\Inventory Object', name(bow));
+  seev(craft, 'CNAM', name(bow_heavy));
+  seev(craft, 'BNAM', name(RecordByHexFormID(sourcePrefix+'000D66')));
 end;
 
 procedure changeEdid(rec:IInterface);
@@ -130,60 +235,19 @@ begin
 end;
 
 /// e is winning
-function doubleIt(e:IInterface):integer;
-var i:integer;
-    cur, r, rec:IInterface;
+function dodoubleIt(e:IInterface):integer;
+var craft, bow_heavy:IInterface;
 begin
-  if checkETIM(e) then exit; // has enchants
-  patchFile := FileSelect('where double');
-  AddMasterIfMissing(patchFile, 'CBOS.esp');
+  craft := findCraft(e);
+  if not assigned(craft) then exit;
+  AddMasterIfMissing(patchFile, SOURCE_FILE_NAME);
   AddMasterIfMissing(patchFile, getfilename(getfile(e)));
   AddMasterIfMissing(patchFile, getfilename(getfile(MasterOrSelf(e))));
-  if not assigned(patchFile) then begin
-    addmessage('no file selected, exiting..(no)');
-    exit;
-  end;
-  
-  //r:=normCopy(e);
-  addmessage('q');
-  r:=normCopyWithPrefix(e, '', '', '_heavy');
-  addmessage('w');
-  r:=normCopy(e);
-  
-  addmessage('2');
-  changeData(r);
-  
-  addmessage('3');
-  rec:=copyRec(e);
-  if not assigned(rec) then begin addmessage('!#$!@&!@#$%!^@&% cant copy rec'); exit; end;
-  
-  changeCraft(rec);
-  
-end;
-
-function process(e:IInterface):integer;
-var tmp,cur,kwda, rec,rec_copy:IInterface;
-    i:integer;
-begin
-  {patchFile := FileSelect('where double');
-  if not assigned(patchFile) then begin
-    addmessage('no file selected, exiting..(no)');
-    exit;
-  end;}
-  result:=doubleIt(e);
-  //changeData(e);
-  //changeCraft(e);
-  
-  {kwda := ElementBySignature(e, 'DNAM');
-  for i:=0 to ElementCount(kwda)-1 do begin
-    cur:=ElementByIndex(kwda, i);
-    addmessage(inttostr(i)+') '+name(cur)+': '+GetEditValue(cur));
-  end;}
-end;
-
-function Finalize: Integer;
-begin
-  
+  bow_heavy := normCopyWithPrefix(e, '', '', '_heavy');
+  changeData_heavy(bow_heavy);
+  changeData(normCopy(e));
+  changeCraft_heavy(normCopyWithPrefix(craft, '', '', '_heavy'), e, bow_heavy);
+  changeCraft(normCopy(craft));
 end;
 
 end.

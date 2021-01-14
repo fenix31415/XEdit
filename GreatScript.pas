@@ -5,29 +5,6 @@
 }
 unit UserScript;
 uses mteFunctions, uselessCore;
-var
-  files: TStringList;
-
-function fileByFormid(id: string): string;
-var i: integer;
-  n: string;
-  curFile:IInterface;
-begin
-  n := copy(id,1,2);
-  for i := 0 to FileCount - 1 do begin
-    curFile := FileByIndex(i);
-    if copy(name(curFile),2,2) = n then begin result := basename(curFile); exit; end;
-  end; result := '';
-end;
-
-function getFullFormId(shortId, filename: string):IInterface;
-var fileRecord: IInterface;
-  tmp: string;
-begin
-  fileRecord := FileByName(fileName);
-  tmp := '$' + copy(name(fileRecord),2,2) + shortId;
-  result := RecordByFormID(fileRecord, StrToInt(tmp), true);
-end;
 
 function Initialize: integer;
 var s:string;
@@ -42,8 +19,7 @@ begin
 end;
 
 function Finalize: Integer;
-var patchFile1: IInterface;
-    tmpStr:string;
+var tmpStr:string;
 begin
   files.Sort;
   patchFile := FileSelect('Select a file for barrels:');
@@ -59,8 +35,6 @@ begin
   AddMasterIfMissing(patchFile, 'Dawnguard.esm');
   AddMasterIfMissing(patchFile, 'HearthFires.esm');
   AddMasterIfMissing(patchFile, 'Dragonborn.esm');
-  
-//patchFile1 := FileSelect('Select a file for laterns:');
   
   /// barrels
   changePro('CELL,WRLD', '0001E3A3', '65C406', 'LegacyoftheDragonborn.esm');
@@ -119,35 +93,12 @@ begin
   end;
 end;
 
-function shouldI(name: string):boolean;
-var i: integer;
-begin
-  result := files.Find(name, i);
-end;
-
 procedure change(group, fromFullId, toShortName, prefix, toFilename: string);
 var fromRecord: IInterface;
 begin
   AddMasterIfMissing(patchFile, toFilename);
-  fromRecord := getFullFormId(copy(fromFullId, 3, 6), fileByFormid(fromFullId));
+  fromRecord := RecordByHexFormID(fromFullId);
   changeItAll(fromRecord, toShortName, prefix, toFilename, group);
-end;
-
-function isRecordFrom(rec: IInterface; from: string): boolean;
-begin
-  result := ContainsText(fullpath(rec), 'GRUP Top "' + from + '"');
-end;
-
-function isInGroup(rec:IInterface; group:string):boolean;
-var groups: TStringList;
-    i:integer;
-begin
-  groups:= TStringList.create;
-  groups.Delimiter := ',';
-  groups.DelimitedText:=group;
-  result := false;
-  for i:=0 to groups.Count-1 do
-    result := result or isRecordFrom(rec, groups[i]);
 end;
 
 function isPresentInFile(f, e:IInterface):boolean;
@@ -203,12 +154,9 @@ begin
   end else if isInGroup(win, 'COBJ') then begin
     r := normCopy(win);
     /// false seems ref removed
-    if not CompareExchangeFormID(r, GetLoadOrderFormID(fromRecord), strtoint('$'+toName)) then /// toName='01CCA101'
+    if not CompareExchangeFormID(r, GetLoadOrderFormID(fromRecord), strtoint('$'+toName)) then
     begin
-      //addmessage('removing(no):'+name(r));
-      //addmessage('because '+inttohex(GetLoadOrderFormID(fromRecord),8)+'________'+toName);
       remove(r);
-      
     end;
   end;
 end;
